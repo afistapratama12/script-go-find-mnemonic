@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -115,16 +116,29 @@ type Service struct {
 	Words         []string
 	AddressToFind map[string]struct{}
 	DB            *sql.DB
+	tempResult    map[string]struct{}
 }
 
 func NewService(words []string, AddressToFind map[string]struct{}, DB *sql.DB) *Service {
-	return &Service{Words: words, AddressToFind: AddressToFind, DB: DB}
+	return &Service{Words: words, AddressToFind: AddressToFind, DB: DB, tempResult: make(map[string]struct{})}
 }
 
 func (s *Service) FindMnemonic(length int) {
-	var tempResult = make(map[string]struct{}) // max 1_000_000 mnemonic
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 
 	fmt.Println("process...")
+
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go s.ProcessFindMnemonic(length, &wg, &mu)
+	}
+
+	wg.Wait()
+}
+
+func (s *Service) ProcessFindMnemonic(length int, wg *sync.WaitGroup, mu *sync.Mutex) {
+	defer wg.Done()
 
 	for {
 		var mnemonic = GetPhrase(s.Words, length)
@@ -133,7 +147,10 @@ func (s *Service) FindMnemonic(length int) {
 			continue
 		}
 
-		tempResult[mnemonic] = struct{}{}
+		mu.Lock()
+		s.tempResult[mnemonic] = struct{}{}
+		mu.Unlock()
+
 		addresses := s.GetAddresses(mnemonic)
 
 		for _, address := range addresses {
@@ -141,23 +158,28 @@ func (s *Service) FindMnemonic(length int) {
 				// write database
 				fmt.Println("\n\nFOUND: ", mnemonic, address)
 
+				mu.Lock()
 				_, err := s.DB.Exec("INSERT INTO results (result) VALUES ($1)", fmt.Sprintf("find mn: %s %s", mnemonic, address))
 				if err != nil {
 					panic(err)
 				}
+				mu.Unlock()
 			}
 		}
 
-		if len(tempResult)%100 == 0 {
-			fmt.Printf("\rcheck: %d", len(tempResult))
+		mu.Lock()
+		if len(s.tempResult)%100 == 0 {
+			fmt.Printf("\rcheck: %d", len(s.tempResult))
 		}
 
-		if len(tempResult) == 1_000_000 {
+		if len(s.tempResult) == 1_000_000 {
 			fmt.Println("checked 1.000.000 mnemonic")
-			tempResult = make(map[string]struct{})
+			s.tempResult = make(map[string]struct{})
 		}
+		mu.Unlock()
 	}
 }
+
 func (s *Service) GetAddresses(mnemonic string) []string { // expect get 2 address
 	wallet, _ := hdwallet.NewFromMnemonic(mnemonic)
 
