@@ -122,12 +122,13 @@ func NewService(words []string, AddressToFind map[string]struct{}, DB *sql.DB) *
 }
 
 func (s *Service) FindMnemonic(length int) {
-	var tempResult = make(map[string]struct{}) // max 1_500_000 mnemonic
+	var tempResult = make(map[string]struct{}) // max 1_000_000 mnemonic
 
 	fmt.Println("process...")
 
 	for {
-		mnemonic := GetPhrase(s.Words, length)
+		var mnemonic = GetPhrase(s.Words, length)
+
 		if !s.CheckPhrase(mnemonic) {
 			continue
 		}
@@ -138,7 +139,7 @@ func (s *Service) FindMnemonic(length int) {
 		for _, address := range addresses {
 			if _, ok := s.AddressToFind[address]; ok {
 				// write database
-				fmt.Println("\n FOUND: ", mnemonic, address)
+				fmt.Println("\n\nFOUND: ", mnemonic, address)
 
 				_, err := s.DB.Exec("INSERT INTO results (result) VALUES ($1)", fmt.Sprintf("find mn: %s %s", mnemonic, address))
 				if err != nil {
@@ -151,7 +152,8 @@ func (s *Service) FindMnemonic(length int) {
 			fmt.Printf("\rcheck: %d", len(tempResult))
 		}
 
-		if len(tempResult) == 1_500_000 {
+		if len(tempResult) == 1_000_000 {
+			fmt.Println("checked 1.000.000 mnemonic")
 			tempResult = make(map[string]struct{})
 		}
 	}
